@@ -25,13 +25,13 @@
                                      (jdt-class-names-on-build-path))))
 
 (defun jdt-class-names-on-build-path ()
-  (process-lines "listclasses" (jdt-get-build-path)))
+  (jdt-list-classes (jdt-get-build-path)))
 
 (defun jdt-get-build-path ()
   (save-excursion
     (jdt-cd-to-maven2-project-root)
-    (join ":" (append '("src/main/java" "src/test/java")
-                      (directory-files "target/dependency" 't)))))
+    (append '("src/main/java" "src/test/java")
+            (directory-files "target/dependency" 't))))
 
 (defun jdt-insert-import (class-name)
   (save-excursion
@@ -47,24 +47,47 @@
   (interactive)
   (let* ((end (point))
          (beg (re-search-backward "\\b[A-Z]"))
-        (initial-input (buffer-substring beg end)))
+         (initial-input (buffer-substring beg end)))
     (kill-line)
     (goto-char beg)
-    (completing-read "Class: " (jdt-class-names-on-build-path))))
-                     
-;; delete
-(defun jdt-complete-type-name (start)
-  (interactive "sType name: ")
-  (find-file tags-file-name)
-  (beginning-of-buffer)
-  (let ((matches '()))
-    (while (re-search-forward (concat "\\(class\\|interface\\) " start)
-                              (buffer-end 1)
-                              't
-                              1)
-      (setq matches (cons (symbol-at-point) matches)))
-    (message "Matches: %s" matches)))
+    (insert-string (completing-read "Class: "
+                                    (jdt-class-names-available)
+                                    () () initial-input () () ()))))
+
+(defun jdt-class-names-available ()
+  "Return a list of class names that have either been imported or are available 
+without importing (e.g. java.lang classes and classes in the same package)"
+  (append (jdt-class-names-in-java-lang)
+          (jdt-imported-classes)))
+
+(defun jdt-imported-classes ()
+  (save-excursion
+    (beginning-of-buffer)
+    (let ((classes '()))
+      (while (re-search-forward "import \\([a-z]+\\.\\)*\\([A-Z][A-Za-z0-9]+\\);"
+                                () 't ())
+        (setq classes (cons (match-string 2) classes)))
+      classes)))
+
+(defun jdt-class-names-in-java-lang ()
+  (mapcar 'jdt-base-class-name (jdt-fq-class-names-in-java-lang)))
+
+(defun jdt-fq-class-names-in-java-lang ()
+  (filter (lambda (x) (string-match "java.lang." x))
+          (jdt-list-classes '("/usr/lib/jvm/java-6-openjdk/jre/lib/rt.jar"))))
+
+(defun jdt-base-class-name (fq-class-name)
+  (string-match "[A-Z][a-z0-9]+$" fq-class-name)
+  (match-string 0 fq-class-name))
+
+(defun jdt-list-classes (path)
+  (process-lines "listclasses" (join ":" path)))
 
 
+;; utils
 (defun join (sep seq)
   (mapconcat 'identity seq sep))
+
+(defun filter (condp lst)
+  (delq nil
+        (mapcar (lambda (x) (and (funcall condp x) x)) lst)))
