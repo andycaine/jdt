@@ -1,3 +1,4 @@
+
 (defun jdt-cd-to-maven2-project-root ()
   (while (not (file-exists-p "pom.xml"))
     (if (string= "Directory /../" (pwd))
@@ -91,3 +92,6 @@ without importing (e.g. java.lang classes and classes in the same package)"
 (defun filter (condp lst)
   (delq nil
         (mapcar (lambda (x) (and (funcall condp x) x)) lst)))
+
+
+(provide 'jdt)
