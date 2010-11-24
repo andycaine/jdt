@@ -1,3 +1,9 @@
+(require 'auto-complete)
+
+(defvar jdt-jdk-location "/usr/lib/jvm/java-6-openjdk/")
+
+(defun jdt-jdk-rt-jar-location ()
+  (concat jdt-jdk-location "jre/lib/rt.jar"))
 
 (defun jdt-cd-to-maven2-project-root ()
   (while (not (file-exists-p "pom.xml"))
@@ -31,7 +37,7 @@
 (defun jdt-get-build-path ()
   (save-excursion
     (jdt-cd-to-maven2-project-root)
-    (append '("src/main/java" "src/test/java")
+    (append (list "src/main/java" "src/test/java" (jdt-jdk-rt-jar-location))
             (directory-files "target/dependency" 't))))
 
 (defun jdt-insert-import (class-name)
@@ -75,11 +81,15 @@ without importing (e.g. java.lang classes and classes in the same package)"
 
 (defun jdt-fq-class-names-in-java-lang ()
   (filter (lambda (x) (string-match "java.lang." x))
-          (jdt-list-classes '("/usr/lib/jvm/java-6-openjdk/jre/lib/rt.jar"))))
+          (jdt-list-classes (jdt-jdk-rt-jar-location))))
 
 (defun jdt-base-class-name (fq-class-name)
   (string-match "[A-Z][a-z0-9]+$" fq-class-name)
   (match-string 0 fq-class-name))
+
+(defun jdt-package-name (fq-class-name)
+  (string-match "\\(\\([a-z]+\\.\\)*[a-z]+\\)\\." fq-class-name)
+  (match-string 1 fq-class-name))
 
 (defun jdt-list-classes (path)
   (process-lines "listclasses" (join ":" path)))
@@ -93,5 +103,46 @@ without importing (e.g. java.lang classes and classes in the same package)"
   (delq nil
         (mapcar (lambda (x) (and (funcall condp x) x)) lst)))
 
+;; auto-complete
+(defvar jdt-class-cache nil)
+(defun jdt-class-candidates ()
+  (if (not jdt-class-cache)
+      (jdt-init-class-cache))
+  jdt-class-cache)
+
+(defun jdt-class-documentation (class)
+  "TODO: add documentation")
+
+(defun jdt-init-class-cache ()
+  (message "Initializing class cache")
+  (setq jdt-class-cache (mapcar (lambda (x) (concat (jdt-base-class-name x)
+                                                    " - "
+                                                    (jdt-package-name x)))
+                                (jdt-class-names-on-build-path))))
+
+(ac-define-source jdt-classes
+  '((init . 'jdt-init-class-cache)
+    (candidates . jdt-class-candidates)
+    (requires . 3)
+    (document . jdt-class-documentation)
+    (action . jdt-complete)
+    (symbol . "c")))
+
+(defun jdt-auto-complete-setup () 
+  (setq ac-sources (list 'ac-source-jdt-classes)))
+
+(add-hook 'java-mode-hook 'jdt-auto-complete-setup)
+(add-hook 'java-mode-hook 'auto-complete-mode)
+
+(defun jdt-complete ()
+  (let* ((package-end (point))
+         (package-start (+ 3 (search-backward " - ")))
+         (package (buffer-substring package-start package-end))
+         (class-end (point))
+         (class-start (re-search-backward "\\b[A-Z]"))
+         (class (buffer-substring class-start class-end)))
+    (delete-region (- package-start 3) package-end)
+    (jdt-insert-import (concat package "." class))
+    (forward-word)))
 
 (provide 'jdt)
