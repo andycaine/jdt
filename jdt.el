@@ -1,6 +1,120 @@
 (require 'auto-complete)
 
+(setq case-fold-search t)
+
 (defvar jdt-jdk-location "/usr/lib/jvm/java-6-openjdk/")
+(defvar jdt-projects '())
+(defvar jdt-project-classes-cache '())
+
+(defun ensure-trailing-slash (dir)
+  (if (string-match-p "/$" dir)
+      dir
+    (concat dir "/")))
+
+(defun make-file-paths-absolute (basedir paths)
+  (mapcar (lambda (path) (concat (ensure-trailing-slash basedir) path))
+          paths))
+
+(defun join (sep seq)
+  (mapconcat 'identity seq sep))
+
+(defun jdt-list-jars (dir)
+  "Returns a list of jar files in the given directory."
+  (directory-files dir t "\\.jar$"))
+
+(defun jdt-prj-register (name basedir &optional (src-dirs '("src/main/java" "src/test/java"))
+                              (class-dirs '("target/classes" "target/test-classes"))
+                              (lib-dirs '("lib")))
+  (add-to-list 'jdt-projects (jdt-make-prj name basedir src-dirs lib-dirs)))
+
+(defun jdt-make-prj (name basedir &optional src-dirs class-dirs lib-dirs)
+  (let ((class-dirs (make-file-paths-absolute basedir class-dirs))
+        (jars (when lib-dirs
+                (mapcan 'jdt-list-jars
+                        (make-file-paths-absolute basedir lib-dirs)))))
+    (list (cons 'name name)
+          (cons 'basedir basedir)
+          (cons 'src-dirs
+                (make-file-paths-absolute basedir src-dirs))
+          (cons 'class-dirs class-dirs)
+          (cons 'jars (cons (concat jdt-jdk-location "jre/lib/rt.jar") jars)))))
+
+(defun jdt-prj-property (prj prop)
+  (cdr (assoc prop prj)))
+
+(defun jdt-prj-name (prj)
+  (jdt-prj-property prj 'name))
+
+(defun jdt-prj-basedir (prj)
+  (jdt-prj-property prj 'basedir))
+
+(defun jdt-prj-classpath (prj)
+  (join ":" (append (jdt-prj-property prj 'jars)
+                    (jdt-prj-property prj 'class-dirs))))
+
+(defun jdt-prj-classes-on-path (prj)
+  (let ((assoc (assoc (jdt-prj-name prj) jdt-project-classes-cache)))
+    (if assoc
+        (cdr assoc)
+      (let ((classes (jdt-listclasses-on-path (jdt-prj-classpath prj))))
+        (add-to-list 'jdt-project-classes-cache
+                     (cons (jdt-prj-name prj)
+                           classes))
+        classes))))
+
+(defun jdt-listclasses-on-path (classpath)
+  (process-lines "listclasses" classpath))
+
+(defun jdt-project-classes-cache-clear ()
+  (setq jdt-project-classes-cache '()))
+
+(defun jdt-jar-list-classes (jar)
+  (with-current-buffer (find-file-noselect jar)
+    (beginning-of-buffer)
+    (let ((classes '()))
+      (while (re-search-forward "\\([a-z]+/\\)*[A-Za-z0-9]+\\.class$" nil t)
+        (push (replace-regexp-in-string "/" "." (match-string 0)) classes))
+      classes)))
+
+(jdt-jar-list-classes "~/libs/junit-4.8.2.jar")
+                              
+
+
+
+(progn
+  (setq prj 
+        (jdt-make-prj "bookingdesk" "~/development/bookingdesk/"
+                      '("src/main/java") '("target/classes") '("lib")))
+  (unless (string= "bookingdesk" (jdt-prj-name prj))
+    (error "Unexpected name"))
+  (unless (string= "~/development/bookingdesk/" (jdt-prj-basedir prj))
+    (error "Unexpected base dir"))
+  (jdt-prj-classes-on-path prj)
+)
+(jdt-project-classes-cache-clear)
+
+;; testing
+(let ((prj (jdt-make-prj "bookingdesk" "~/development/bookingdesk/" '("src/main/java") '("target/classes") '("lib"))))
+  (unless (string= "bookingdesk" (jdt-prj-name prj))
+    (error "Unexpected name"))
+  (unless (string= "~/development/bookingdesk/" (jdt-prj-basedir prj))
+    (error "Unexpected base dir")))
+
+(progn
+  (setq jdt-projects nil)
+  (jdt-prj-register "bookingdesk" "~/development/bookingdesk/")
+  (unless (= (length jdt-projects) 1) (error "Project not registered")))
+
+
+
+
+
+
+
+
+
+
+
 (defvar jdt-class-cache nil)
 (defvar jdt-class-candidate-cache nil)
 (defvar jdt-projects '())

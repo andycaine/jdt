@@ -16,6 +16,7 @@ sub path_to_class_name {
 sub process_dir {
     (my $dir) = @_;
     $dir .= "/" if (not $dir =~ /\/$/);
+    return if not -d $dir;
     find(sub { 
         if (/^[A-Z][a-zA-Z0-9]+\.java/) {
             my $path = $File::Find::name;
@@ -29,7 +30,7 @@ sub process_jar {
     (my $jar) = @_;
     my $zip = Archive::Zip->new();
 
-    $zip->read($jar) == AZ_OK or die "Unable to read jar file: $jar";
+    $zip->read($jar) == AZ_OK or return;
     my @class_paths = $zip->membersMatching("^([a-z]+/)*[A-Z][a-zA-Z0-9]+\.class");
     foreach my $path (@class_paths) {
         print path_to_class_name($path->fileName()) . "\n";
