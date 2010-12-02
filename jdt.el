@@ -2,7 +2,7 @@
 (defvar jdt-jdk-location "/usr/lib/jvm/java-6-openjdk/")
 
 ;; Set case sensitive regexes
-(setq case-fold-search t)
+(setq case-fold-search nil)
 
 ;; Utilities
 (defun time-funcall (fn &rest args)
@@ -35,9 +35,10 @@
   (with-current-buffer (get-buffer-create cache-buffer-name)
     (if (= (buffer-size) 0)
         (let ((lst (funcall lst-fn)))
-          (insert (join "\n" lst))
+          (print lst (current-buffer))
           lst)
-      (split-string (buffer-string) "\n" t))))
+      (goto-char (point-min))
+      (read (current-buffer)))))
 
 ;; Projects
 (defvar jdt-projects '())
@@ -97,62 +98,92 @@
   (jdt-prj-owning (buffer-file-name) jdt-projects))
 
 ;; Class names
-(defun jdt-class-name-fq-name-from-file-name (file-name)
-  "Returns the fully qualified class name of the given file-name representing a
-Java class file or a Java source file."
-  (replace-regexp-in-string "\\.\\(class$\\|java$\\)" ""
-                            (replace-regexp-in-string "/" "." file-name)))
-
-(defun jdt-make-class-name (fq-class-name)
-    (string-match "\\(^\\([a-z]+\\.\\)*\\)\\([A-Z]+[A-Za-z0-9]*$\\)" fq-class-name)
-    (cons (match-string 1 fq-class-name)
-          (match-string 2 fq-class-name)))
-
-(defun jdt-class-name-base-name (class)
-    (string-match "\\(^\\([a-z]+\\.\\)*\\)\\([A-Z]+[A-Za-z0-9]*$\\)" class)
-    (match-string 3 class))
-    ;(cdr class))
-
-(defun jdt-class-name-package (class)
-    (string-match "\\(^\\([a-z]+\\.\\)*\\)\\([A-Z]+[A-Za-z0-9]*$\\)" class)
-    (match-string 1 class))
-  ;(car class))
-
-;; Class repos
 (defun jdt-class-file-p (file-name)
   "Returns true if file-name represents a class file."
-  (string-match-p "^\\([a-z]+/\\)*[A-Z]+[A-Za-z0-9]*\\.class$" file-name))
+  (string-match "\\(^\\([a-z]+/\\)*\\)\\([A-Z]+[A-Za-z0-9]*\\.\\(java\\|class\\)$\\)" file-name))
 
+(defun jdt-make-class-name-from-file-name (file-name)
+  (when (jdt-class-file-p file-name)
+    (jdt-make-class-name (replace-regexp-in-string "\\.$" ""
+                                                   (replace-regexp-in-string "/" "."
+                                                                             (match-string 1 file-name)))
+                         (replace-regexp-in-string "\\.\\(class\\|java\\)$" ""
+                                                   (match-string 3 file-name)))))
+
+(defun jdt-make-class-name (package base-name)
+  (cons package base-name))
+
+(defun jdt-class-name-base-name (class)
+  (cdr class))
+
+(defun jdt-class-name-package (class)
+  (car class))
+
+;; Class repos
 (defun jdt-class-repos-cache-buf-name (repo-name)
   (format "*%s*" repo-name))
 
 (defun jdt-class-repos-classes-in-jar (jar-file)
-  (jdt-get-list-using-buffer-cache (lambda () (mapcar 'jdt-class-fq-name-from-file-name
+  (jdt-get-list-using-buffer-cache (lambda () (mapcar 'jdt-make-class-name-from-file-name
                                                       (remove-if-not 'jdt-class-file-p
                                                                      (process-lines "jar" "tf" jar-file))))
                                    (format "*%s*" jar-file)))
 
+(defun directory-files-recursive (dir)
+  (mapcar (lambda (f)
+            (if (file-directory-p f)))))
 
+(defun jdt-class-repos-classes-in-dir (dir)
+  (mapcar (lambda (f)
+            (if (file-directory-p f)
+                (jdt-class-repos-classes-in-dir
 
+  directory-files-no-dot-files-regexp
+  (directory-files
 
 (defun jdt-class-repos-get-classes (repo)
   "Returns all the classes in the given class repository (either a jar file or a class directory)."
   (if (string-match-p "\\.jar$" repo)
       (jdt-class-repos-classes-in-jar repo)
-    '()))
+    (jdt-class-repos-classes-in-dir repo)))
 
+;; Import
+(defun jdt-import-import-class (package base-name)
+  (save-excursion
+    (goto-char (point-min))
+    (forward-line 2)
+    (insert (format "import %s.%s;\n" package base-name))))
+
+(defun jdt-import-class-imported-p (package base-name)
+  (save-excursion
+    (goto-char (point-min))
+    (or (re-search-forward (format "import %s.%s;" package base-name))
+        (re-search-forward (format "import %s.*;" package)))))
 
 ;; Auto-completion
 (require 'auto-complete)
 
-(defun jdt-ac-class-candidates ()
+(defun jdt-ac-class-candidates-1 (prj)
   (mapcar (lambda (class) (format "%s - %s"
                                   (jdt-class-name-base-name class)
                                   (jdt-class-name-package class)))
-          (jdt-prj-classes-on-path (jdt-prj-owning-current-buffer))))
+          (jdt-prj-classes-on-path prj)))
+
+(defun jdt-ac-class-candidates ()
+  (jdt-ac-class-candidates-1 (jdt-prj-owning-current-buffer)))
 
 (defun jdt-ac-complete-class ()
-  
+  (let* ((package-end (point))
+         (package-start (1+ (re-search-backward "\s")))
+         (class-end (re-search-backward "\s-"))
+         (class-start (re-search-backward "[A-Z]"))
+         (package (buffer-substring package-start package-end))
+         (class (buffer-substring class-start class-end)))
+    (delete-region class-end package-end)
+    (goto-char class-end)
+    (when (and (not (jdt-import-class-imported-p package class))
+               (not (string= "java.lang" package)))
+      (jdt-import-import-class package class))))
 
 (ac-define-source jdt-classes
   '((candidates . jdt-ac-class-candidates)
@@ -171,24 +202,20 @@ Java class file or a Java source file."
     (error "Unexpected name"))
   (unless (string= "/home/acaine/development/bookingdesk/" (jdt-prj-basedir prj))
     (error "Unexpected base dir"))
-  (unless (= 23853 (length (jdt-prj-classes-on-path prj)))
+  (unless (= 24003 (length (jdt-prj-classes-on-path prj)))
     (error "Unexpected class count"))
   (unless (jdt-prj-owning "/home/acaine/development/bookingdesk/README" (list prj)))
   )
 
-(defun jdt-ac-class-candidates1 (prj)
-  (mapcar (lambda (class) (format "%s - %s"
-                                  (jdt-class-name-base-name class)
-                                  (jdt-class-name-package class)))
-          (jdt-prj-classes-on-path prj)))
-  
-(time-funcall 'jdt-prj-classes-on-path prj)
-(time-funcall 'jdt-ac-class-candidates1 prj)
-(time-funcall 'test-read-buffer)
-(time-funcall 'test-eval-buffer)
 
-(length (test-eval-buffer))
-(length (test-read-buffer))
+(time-funcall 'jdt-prj-classes-on-path prj)
+;(time-funcall 'jdt-ac-class-candidates1 prj)
+;(time-funcall 'test-read-buffer)
+;(time-funcall 'test-eval-buffer)
+
+;(length (listp (test-eval-buffer)))
+;(length (test-read-buffer))
+;(jdt-prj-classes-on-path prj)
 
 (defun test-read-buffer ()
   (with-current-buffer "*bookingdesk classes*"
@@ -196,23 +223,29 @@ Java class file or a Java source file."
 
 (defun test-eval-buffer ()
   (with-current-buffer "*bookingdesk lisp classes*"
-    (eval (buffer-string))))
+    (goto-char (point-min))    
+    (read (current-buffer))))
 
 (with-current-buffer (get-buffer-create "*bookingdesk lisp classes*")
+  (message (buffer-name))
   (erase-buffer)
-  (insert (format "'(%s)" (join " " (test-read-buffer)))))
+  (goto-char (point-min))
+  (print (test-read-buffer) (current-buffer)))
 
-(format "'(%s)" (join " " (test-read-buffer)))
-(eval "'(1 2 3)")
-(jdt-class-name-package "uk.co.cnm.BaseClass")
-(jdt-class-name-base-name "uk.co.cnm.BaseClass")
+
+;(format "'(%s)" (join " " (test-read-buffer)))
+;(eval "'(1 2 3)")
+;(jdt-class-name-package "uk.co.cnm.BaseClass")
+;(jdt-class-name-base-name "uk.co.cnm.BaseClass")
+
+
 
 ;; testing
-(let ((prj (jdt-make-prj "bookingdesk" "~/development/bookingdesk/" '("src/main/java") '("target/classes") '("lib"))))
-  (unless (string= "bookingdesk" (jdt-prj-name prj))
-    (error "Unexpected name"))
-  (unless (string= "~/development/bookingdesk/" (jdt-prj-basedir prj))
-    (error "Unexpected base dir")))
+;(let ((prj (jdt-make-prj "bookingdesk" "~/development/bookingdesk/" '("src/main/java") '("target/classes") '("lib"))))
+;  (unless (string= "bookingdesk" (jdt-prj-name prj))
+;    (error "Unexpected name"))
+;  (unless (string= "~/development/bookingdesk/" (jdt-prj-basedir prj))
+;    (error "Unexpected base dir")))
 
 (progn
   (setq jdt-projects nil)
@@ -530,11 +563,4 @@ without importing (e.g. java.lang classes and classes in the same package)"
 
 
 (provide 'jdt)
-
-(defun directory-files-recursive (dir)
-  (mapcan (lambda (file)
-            (if (file-directory-p file)
-                (all-files file)
-              (list file)))
-          (directory-files dir t "^[a-zA-Z].*")))
 
