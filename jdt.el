@@ -5,6 +5,12 @@
 (setq case-fold-search t)
 
 ;; Utilities
+(defun time-funcall (fn &rest args)
+  (let ((start (time-to-seconds (current-time))))
+    (apply fn args)
+    (- (time-to-seconds (current-time))
+       start)))
+
 (defun longer (x y)
   (labels ((compare (x y)
                     (and (consp x)
@@ -19,14 +25,8 @@
       nil
     (string-match-p (format "^%s.*" prefix) str)))
 
-(defun ensure-trailing-slash (dir)
-  (if (string-match-p "/$" dir)
-      dir
-    (concat dir "/")))
-
-(defun make-file-paths-absolute (basedir paths)
-  (mapcar (lambda (path) (concat (ensure-trailing-slash basedir) path))
-          paths))
+(defun expand-file-names (paths base-dir)
+  (mapcar (lambda (x) (expand-file-name x basedir)) paths))
 
 (defun join (sep seq)
   (mapconcat 'identity seq sep))
@@ -50,14 +50,14 @@
   (add-to-list 'jdt-projects (jdt-make-prj name basedir src-dirs lib-dirs)))
 
 (defun jdt-make-prj (name basedir &optional src-dirs class-dirs lib-dirs)
-  (let ((class-dirs (make-file-paths-absolute basedir class-dirs))
+  (let ((class-dirs (expand-file-names class-dirs basedir))
         (jars (when lib-dirs
                 (mapcan 'jdt-list-jars
-                        (make-file-paths-absolute basedir lib-dirs)))))
+                        (expand-file-names lib-dirs basedir)))))
     (list (cons 'name name)
           (cons 'basedir (expand-file-name basedir))
           (cons 'src-dirs
-                (make-file-paths-absolute basedir src-dirs))
+                (expand-file-names src-dirs basedir))
           (cons 'class-dirs class-dirs)
           (cons 'jars (cons (concat jdt-jdk-location "jre/lib/rt.jar") jars)))))
 
@@ -96,11 +96,27 @@
 (defun jdt-prj-owning-current-buffer ()
   (jdt-prj-owning (buffer-file-name) jdt-projects))
 
-;; Classes
-(defun jdt-class-from-file-name (file-name)
-  ;;TODO: drop the java extension if it isn't used
+;; Class names
+(defun jdt-class-name-fq-name-from-file-name (file-name)
+  "Returns the fully qualified class name of the given file-name representing a
+Java class file or a Java source file."
   (replace-regexp-in-string "\\.\\(class$\\|java$\\)" ""
                             (replace-regexp-in-string "/" "." file-name)))
+
+(defun jdt-make-class-name (fq-class-name)
+    (string-match "\\(^\\([a-z]+\\.\\)*\\)\\([A-Z]+[A-Za-z0-9]*$\\)" fq-class-name)
+    (cons (match-string 1 fq-class-name)
+          (match-string 2 fq-class-name)))
+
+(defun jdt-class-name-base-name (class)
+    (string-match "\\(^\\([a-z]+\\.\\)*\\)\\([A-Z]+[A-Za-z0-9]*$\\)" class)
+    (match-string 3 class))
+    ;(cdr class))
+
+(defun jdt-class-name-package (class)
+    (string-match "\\(^\\([a-z]+\\.\\)*\\)\\([A-Z]+[A-Za-z0-9]*$\\)" class)
+    (match-string 1 class))
+  ;(car class))
 
 ;; Class repos
 (defun jdt-class-file-p (file-name)
@@ -111,10 +127,13 @@
   (format "*%s*" repo-name))
 
 (defun jdt-class-repos-classes-in-jar (jar-file)
-  (jdt-get-list-using-buffer-cache (lambda () (mapcar 'jdt-class-from-file-name
+  (jdt-get-list-using-buffer-cache (lambda () (mapcar 'jdt-class-fq-name-from-file-name
                                                       (remove-if-not 'jdt-class-file-p
                                                                      (process-lines "jar" "tf" jar-file))))
                                    (format "*%s*" jar-file)))
+
+
+
 
 (defun jdt-class-repos-get-classes (repo)
   "Returns all the classes in the given class repository (either a jar file or a class directory)."
@@ -124,6 +143,24 @@
 
 
 ;; Auto-completion
+(require 'auto-complete)
+
+(defun jdt-ac-class-candidates ()
+  (mapcar (lambda (class) (format "%s - %s"
+                                  (jdt-class-name-base-name class)
+                                  (jdt-class-name-package class)))
+          (jdt-prj-classes-on-path (jdt-prj-owning-current-buffer))))
+
+(defun jdt-ac-complete-class ()
+  
+
+(ac-define-source jdt-classes
+  '((candidates . jdt-ac-class-candidates)
+    (requires . 3)
+    ;(document . jdt-class-documentation)
+    (action . jdt-ac-complete-class)
+    (symbol . "c")))
+
 
 
 (progn
@@ -132,13 +169,43 @@
                       '("src/main/java") '("target/classes") '("lib")))
   (unless (string= "bookingdesk" (jdt-prj-name prj))
     (error "Unexpected name"))
-  (unless (string= "~/development/bookingdesk/" (jdt-prj-basedir prj))
+  (unless (string= "/home/acaine/development/bookingdesk/" (jdt-prj-basedir prj))
     (error "Unexpected base dir"))
   (unless (= 23853 (length (jdt-prj-classes-on-path prj)))
     (error "Unexpected class count"))
   (unless (jdt-prj-owning "/home/acaine/development/bookingdesk/README" (list prj)))
   )
 
+(defun jdt-ac-class-candidates1 (prj)
+  (mapcar (lambda (class) (format "%s - %s"
+                                  (jdt-class-name-base-name class)
+                                  (jdt-class-name-package class)))
+          (jdt-prj-classes-on-path prj)))
+  
+(time-funcall 'jdt-prj-classes-on-path prj)
+(time-funcall 'jdt-ac-class-candidates1 prj)
+(time-funcall 'test-read-buffer)
+(time-funcall 'test-eval-buffer)
+
+(length (test-eval-buffer))
+(length (test-read-buffer))
+
+(defun test-read-buffer ()
+  (with-current-buffer "*bookingdesk classes*"
+    (split-string (buffer-string) "\n" t)))
+
+(defun test-eval-buffer ()
+  (with-current-buffer "*bookingdesk lisp classes*"
+    (eval (buffer-string))))
+
+(with-current-buffer (get-buffer-create "*bookingdesk lisp classes*")
+  (erase-buffer)
+  (insert (format "'(%s)" (join " " (test-read-buffer)))))
+
+(format "'(%s)" (join " " (test-read-buffer)))
+(eval "'(1 2 3)")
+(jdt-class-name-package "uk.co.cnm.BaseClass")
+(jdt-class-name-base-name "uk.co.cnm.BaseClass")
 
 ;; testing
 (let ((prj (jdt-make-prj "bookingdesk" "~/development/bookingdesk/" '("src/main/java") '("target/classes") '("lib"))))
@@ -327,14 +394,6 @@ without importing (e.g. java.lang classes and classes in the same package)"
             ((string-match-p pattern file) (add-to-list 'result file))))))
 
 
-
-;; utils
-(defun join (sep seq)
-  (mapconcat 'identity seq sep))
-
-(defun filter (condp lst)
-  (delq nil
-        (mapcar (lambda (x) (and (funcall condp x) x)) lst)))
 
 ;; auto-completion
 (defun jdt-class-candidates ()
