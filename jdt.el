@@ -1,10 +1,23 @@
-(require 'auto-complete)
+;; Global config variables
+(defvar jdt-jdk-location "/usr/lib/jvm/java-6-openjdk/")
 
+;; Set case sensitive regexes
 (setq case-fold-search t)
 
-(defvar jdt-jdk-location "/usr/lib/jvm/java-6-openjdk/")
-(defvar jdt-projects '())
-(defvar jdt-project-classes-cache '())
+;; Utilities
+(defun longer (x y)
+  (labels ((compare (x y)
+                    (and (consp x)
+                         (or (null y)
+                             (compare (cdr x) (cdr y))))))
+    (if (and (listp x) (listp y))
+        (compare x y)
+      (> (length x) (length y)))))
+
+(defun string-starts-with (prefix str)
+  (if (longer prefix str)
+      nil
+    (string-match-p (format "^%s.*" prefix) str)))
 
 (defun ensure-trailing-slash (dir)
   (if (string-match-p "/$" dir)
@@ -18,13 +31,22 @@
 (defun join (sep seq)
   (mapconcat 'identity seq sep))
 
+(defun jdt-get-list-using-buffer-cache (lst-fn cache-buffer-name)
+  (with-current-buffer (get-buffer-create cache-buffer-name)
+    (if (= (buffer-size) 0)
+        (let ((lst (funcall lst-fn)))
+          (insert (join "\n" lst))
+          lst)
+      (split-string (buffer-string) "\n" t))))
+
+;; Projects
+(defvar jdt-projects '())
+
 (defun jdt-list-jars (dir)
   "Returns a list of jar files in the given directory."
   (directory-files dir t "\\.jar$"))
 
-(defun jdt-prj-register (name basedir &optional (src-dirs '("src/main/java" "src/test/java"))
-                              (class-dirs '("target/classes" "target/test-classes"))
-                              (lib-dirs '("lib")))
+(defun jdt-prj-register (name basedir &optional src-dirs class-dirs lib-dirs)
   (add-to-list 'jdt-projects (jdt-make-prj name basedir src-dirs lib-dirs)))
 
 (defun jdt-make-prj (name basedir &optional src-dirs class-dirs lib-dirs)
@@ -33,7 +55,7 @@
                 (mapcan 'jdt-list-jars
                         (make-file-paths-absolute basedir lib-dirs)))))
     (list (cons 'name name)
-          (cons 'basedir basedir)
+          (cons 'basedir (expand-file-name basedir))
           (cons 'src-dirs
                 (make-file-paths-absolute basedir src-dirs))
           (cons 'class-dirs class-dirs)
@@ -48,37 +70,60 @@
 (defun jdt-prj-basedir (prj)
   (jdt-prj-property prj 'basedir))
 
-(defun jdt-prj-classpath (prj)
-  (join ":" (append (jdt-prj-property prj 'jars)
-                    (jdt-prj-property prj 'class-dirs))))
+(defun jdt-prj-classpath-entries (prj)
+  (append (jdt-prj-property prj 'jars)
+          (jdt-prj-property prj 'class-dirs)))
 
 (defun jdt-prj-classes-on-path (prj)
-  (let ((assoc (assoc (jdt-prj-name prj) jdt-project-classes-cache)))
-    (if assoc
-        (cdr assoc)
-      (let ((classes (jdt-listclasses-on-path (jdt-prj-classpath prj))))
-        (add-to-list 'jdt-project-classes-cache
-                     (cons (jdt-prj-name prj)
-                           classes))
-        classes))))
+  "Returns a list of all the classes available on this projects path."
+  (jdt-get-list-using-buffer-cache (lambda () (mapcan 'jdt-class-repos-get-classes
+                                                      (jdt-prj-classpath-entries prj)))
+                                   (format "*%s classes*" (jdt-prj-name prj))))
 
-(defun jdt-listclasses-on-path (classpath)
-  (process-lines "listclasses" classpath))
+(defun jdt-prj-classpath (prj)
+  (join ":" (jdt-prj-classpath-entries prj)))
 
-(defun jdt-project-classes-cache-clear ()
-  (setq jdt-project-classes-cache '()))
+(defun jdt-prj-owning (file-name projects)
+  "Returns the project owning file-name"
+  (let ((prjs (remove-if-not (lambda (p)
+                               (string-starts-with (jdt-prj-basedir p) file-name))
+                             projects)))
+    (when (not (= 1 (length prjs)))
+      (error (format "Unable to find unique project owning file name: %s"
+                     file-name)))
+    (car prjs)))
 
-(defun jdt-jar-list-classes (jar)
-  (with-current-buffer (find-file-noselect jar)
-    (beginning-of-buffer)
-    (let ((classes '()))
-      (while (re-search-forward "\\([a-z]+/\\)*[A-Za-z0-9]+\\.class$" nil t)
-        (push (replace-regexp-in-string "/" "." (match-string 0)) classes))
-      classes)))
+(defun jdt-prj-owning-current-buffer ()
+  (jdt-prj-owning (buffer-file-name) jdt-projects))
 
-(jdt-jar-list-classes "~/libs/junit-4.8.2.jar")
-                              
+;; Classes
+(defun jdt-class-from-file-name (file-name)
+  ;;TODO: drop the java extension if it isn't used
+  (replace-regexp-in-string "\\.\\(class$\\|java$\\)" ""
+                            (replace-regexp-in-string "/" "." file-name)))
 
+;; Class repos
+(defun jdt-class-file-p (file-name)
+  "Returns true if file-name represents a class file."
+  (string-match-p "^\\([a-z]+/\\)*[A-Z]+[A-Za-z0-9]*\\.class$" file-name))
+
+(defun jdt-class-repos-cache-buf-name (repo-name)
+  (format "*%s*" repo-name))
+
+(defun jdt-class-repos-classes-in-jar (jar-file)
+  (jdt-get-list-using-buffer-cache (lambda () (mapcar 'jdt-class-from-file-name
+                                                      (remove-if-not 'jdt-class-file-p
+                                                                     (process-lines "jar" "tf" jar-file))))
+                                   (format "*%s*" jar-file)))
+
+(defun jdt-class-repos-get-classes (repo)
+  "Returns all the classes in the given class repository (either a jar file or a class directory)."
+  (if (string-match-p "\\.jar$" repo)
+      (jdt-class-repos-classes-in-jar repo)
+    '()))
+
+
+;; Auto-completion
 
 
 (progn
@@ -89,9 +134,11 @@
     (error "Unexpected name"))
   (unless (string= "~/development/bookingdesk/" (jdt-prj-basedir prj))
     (error "Unexpected base dir"))
-  (jdt-prj-classes-on-path prj)
-)
-(jdt-project-classes-cache-clear)
+  (unless (= 23853 (length (jdt-prj-classes-on-path prj)))
+    (error "Unexpected class count"))
+  (unless (jdt-prj-owning "/home/acaine/development/bookingdesk/README" (list prj)))
+  )
+
 
 ;; testing
 (let ((prj (jdt-make-prj "bookingdesk" "~/development/bookingdesk/" '("src/main/java") '("target/classes") '("lib"))))
@@ -107,6 +154,11 @@
 
 
 
+
+
+
+
+(require 'auto-complete)
 
 
 
@@ -169,11 +221,6 @@ buffer belongs to."
   (if (string= path "/") (error "Path is the root directory"))
   (string-match "\\(.*\\)/[^/]+/?$" path)
   (concat (match-string 1 path) "/"))
-
-(defun string-starts-with (prefix str)
-  (if (> (length prefix) (length str))
-      nil
-    (string-match (format "^%s.*" prefix) str)))
 
 (defun jdt-import-class ()
   (interactive)
