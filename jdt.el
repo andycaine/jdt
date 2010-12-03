@@ -133,6 +133,11 @@
 (defun jdt-class-name-package (class)
   (car class))
 
+(defun jdt-class-name-as-string (class-name)
+  (format "%s.%s"
+          (jdt-class-name-package class-name)
+          (jdt-class-name-base-name class-name)))
+
 ;; Class repos
 (defun jdt-class-repos-cache-buf-name (repo-name)
   (format "*%s*" repo-name))
@@ -153,6 +158,15 @@
   (if (string-match-p "\\.jar$" repo)
       (jdt-class-repos-classes-in-jar repo)
     (jdt-class-repos-classes-in-dir repo)))
+
+(defvar jdt-java-lang-classes-cache '())
+(defun jdt-classes-in-java-lang ()
+  (unless jdt-java-lang-classes-cache
+    (setq jdt-java-lang-classes-cache
+          (remove-if-not (lambda (class) (string= (jdt-class-name-package class) "java.lang"))
+                         (jdt-class-repos-classes-in-jar (concat jdt-jdk-location
+                                                                 "jre/lib/rt.jar")))))
+  jdt-java-lang-classes-cache)
 
 ;; Import
 (defun jdt-import-import-class (package base-name)
@@ -196,7 +210,6 @@
 ;(let ((project (car jdt-projects)))
 ;  (jdt-ac-class-candidates-1 project))
 
-
 (defun jdt-ac-class-candidates ()
   (jdt-ac-class-candidates-1 (jdt-prj-owning-current-buffer)))
 
@@ -219,8 +232,60 @@
     (action . jdt-ac-complete-class)
     (symbol . "c")))
 
+(defun jdt-name-of-object-being-called-at-point()
+  (save-excursion
+    (search-backward ".")
+    (word-at-point)))
+
+(defun jdt-class-in-java-lang-p (simple-name)
+  (find simple-name
+        (jdt-classes-in-java-lang)
+        :test (lambda (sname class-name) (string= (jdt-class-name-base-name class-name) sname))))
+
+(defun jdt-class-of-object-being-called-at-point ()
+  (save-excursion
+    (re-search-backward (concat "\\([A-Z]+[A-Za-z0-9_]?\\)\s+"
+                                (jdt-name-of-object-being-called-at-point)))
+    (let* ((simple-name (word-at-point))
+           (java-lang-name (jdt-class-in-java-lang-p simple-name)))
+      (or java-lang-name
+          (if (progn (goto-char (point-min))
+                     (re-search-forward (concat "^import +\\(.*\\)" simple-name ";") nil 't))
+              (jdt-make-class-name (match-string-no-properties 1) simple-name))
+          (jdt-make-class-name (jdt-package-current-buffer) simple-name)))))
+
+;(with-current-buffer (get-buffer "LoadFileCreatorImpl.java")
+;  (goto-char 2532)
+;  (jdt-class-of-object-being-called-at-point))
+
+(defun jdt-class-methods (class)
+  (let ((res (process-lines "listmembers"
+                            (jdt-prj-classpath (jdt-prj-owning-current-buffer))
+                            (jdt-class-name-as-string class))))
+    res))
+
+(with-current-buffer (get-buffer "LoadFileCreatorImpl.java")
+  (jdt-class-methods '("java.util" . "List")))
+
+
+(defun jdt-ac-method-candidates ()
+  (jdt-class-methods (jdt-class-of-object-being-called-at-point)))
+
+(defun jdt-ac-complete-method ()
+  )
+;; (defun jdt-member-candidates ()
+;;   (let ((class (jdt-fq-class-name-of-object-at-point)))
+;;     (jdt-list-members class)))
+
+(ac-define-source jdt-methods
+  '((candidates . jdt-ac-method-candidates)
+    (requires . 0)
+    (prefix . c-dot)
+;    (action . jdt-ac-complete-method)
+    (symbol . "m")))
+
 (defun jdt-auto-complete-setup ()
-  (setq ac-sources (list 'ac-source-jdt-classes))
+  (setq ac-sources (list 'ac-source-jdt-classes 'ac-source-jdt-methods))
   (jdt-prj-classes-on-path (jdt-prj-owning (buffer-file-name (current-buffer))
                                            jdt-projects)))
 
