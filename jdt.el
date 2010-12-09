@@ -1,10 +1,6 @@
-;; Global config variables
+(defvar jdt-projects '())
 (defvar jdt-jdk-location "/usr/lib/jvm/java-6-openjdk/")
 
-;; Set case sensitive regexes
-(setq case-fold-search nil)
-
-;; Utilities
 (defun time-funcall (fn &rest args)
   (let ((start (time-to-seconds (current-time))))
     (apply fn args)
@@ -45,6 +41,18 @@
       (mapcar (lambda (f) (file-relative-name f dir))
               matched))))
 
+(defun make-file-name (parent-path child-path &optional path-sep)
+  "Returns a file-name form a parent pathname and a child pathname, separated by
+a single path separator."
+  (let ((path-sep (or path-sep "/")))
+    (concat (replace-regexp-in-string (format "%s$" path-sep)
+                                      ""
+                                      parent-path)
+            path-sep child-path)))
+
+(defun memoize (fn args)
+  
+  )
 (defun jdt-get-list-using-buffer-cache (lst-fn cache-buffer-name)
   (with-current-buffer (get-buffer-create cache-buffer-name)
     (if (= (buffer-size) 0)
@@ -54,62 +62,86 @@
       (goto-char (point-min))
       (read (current-buffer)))))
 
-;; Projects
-(defvar jdt-projects '())
 
-(defun jdt-list-jars (dir)
-  "Returns a list of jar files in the given directory."
-  (directory-files dir t "\\.jar$"))
 
-(defun jdt-prj-register (name basedir &optional src-dirs class-dirs lib-dirs)
-  (add-to-list 'jdt-projects (jdt-make-prj name basedir src-dirs class-dirs lib-dirs)))
+(defstruct project name base-dir src-dirs class-dirs lib-dirs)
 
-(defun jdt-make-prj (name basedir &optional src-dirs class-dirs lib-dirs)
-  (let ((class-dirs (expand-file-names class-dirs basedir))
-        (jars (when lib-dirs
-                (mapcan 'jdt-list-jars
-                        (expand-file-names lib-dirs basedir)))))
-    (list (cons 'name name)
-          (cons 'basedir (expand-file-name basedir))
-          (cons 'src-dirs
-                (expand-file-names src-dirs basedir))
-          (cons 'class-dirs class-dirs)
-          (cons 'jars (cons (concat jdt-jdk-location "jre/lib/rt.jar") jars)))))
+(defun register-jdt-project (project)
+  (add-to-list 'jdt-projects project))
 
-(defun jdt-prj-property (prj prop)
-  (cdr (assoc prop prj)))
+;(defun jdt-list-jars (dir)
+;  "Returns a list of jar files in the given directory."
+;  (directory-files dir t "\\.jar$"))
 
-(defun jdt-prj-name (prj)
-  (jdt-prj-property prj 'name))
+;(defun jdt-prj-register (name basedir &optional src-dirs class-dirs lib-dirs)
+;  (add-to-list 'jdt-projects (jdt-make-prj name basedir src-dirs class-dirs lib-dirs)))
 
-(defun jdt-prj-basedir (prj)
-  (jdt-prj-property prj 'basedir))
+;(defun jdt-make-prj (name basedir &optional src-dirs class-dirs lib-dirs)
+;  (let ((class-dirs (expand-file-names class-dirs basedir))
+;        (jars (when lib-dirs
+;                (mapcan 'jdt-list-jars
+;                        (expand-file-names lib-dirs basedir)))))
+;    (list (cons 'name name)
+;          (cons 'basedir (expand-file-name basedir))
+;          (cons 'src-dirs
+;                (expand-file-names src-dirs basedir))
+;          (cons 'class-dirs class-dirs)
+;          (cons 'jars (cons (concat jdt-jdk-location "jre/lib/rt.jar") jars)))))
 
-(defun jdt-prj-classpath-entries (prj)
-  (append (jdt-prj-property prj 'jars)
-          (jdt-prj-property prj 'class-dirs)))
+;(defun jdt-prj-property (prj prop)
+;  (cdr (assoc prop prj)))
 
-(defun jdt-prj-classes-on-path (prj)
-  "Returns a list of all the classes available on this projects path."
+;(defun jdt-prj-name (prj)
+;  (jdt-prj-property prj 'name))
+
+;(defun jdt-prj-basedir (prj)
+;  (jdt-prj-property prj 'basedir))
+
+(defun project-classpath (project)
+  "Returns a list of classpath entries for PROJECT."
+  (mapcar (lambda (filename) (expand-file-name filename
+                                               (project-base-dir project)))
+          (append (project-class-dirs project)
+                  (mapcar (lambda (lib-dir) (make-file-name lib-dir "*"))
+                          (project-lib-dirs project)))))
+
+;(defun jdt-prj-classpath-entries (prj)
+;  (append (jdt-prj-property prj 'jars)
+;          (jdt-prj-property prj 'class-dirs)))
+
+(defun project-classes (project)
+  "Returns a list of all the classes available in this PROJECT, including
+classes from the Java class libraries."
   (jdt-get-list-using-buffer-cache (lambda () (mapcan 'jdt-class-repos-get-classes
-                                                      (jdt-prj-classpath-entries prj)))
-                                   (format "*%s classes*" (jdt-prj-name prj))))
+                                                      (cons (concat jdt-jdk-location
+                                                                    "jre/lib/rt.jar")
+                                                            (project-classpath project))))
+                                   (format "*%s classes*" (project-name project))))
 
-(defun jdt-prj-classpath (prj)
+
+;(defun jdt-prj-classes-on-path (prj)
+;  "Returns a list of all the classes available on this projects path."
+;  (jdt-get-list-using-buffer-cache (lambda () (mapcan 'jdt-class-repos-get-classes
+;                                                      (jdt-prj-classpath-entries prj)))
+;                                   (format "*%s classes*" (jdt-prj-name prj))))
+
+(defun project-classpath-string (project)
+  "Returns a string containing all the classpath entries for PROJECT suitable
+for passing as an argument to javac."
   (join ":" (jdt-prj-classpath-entries prj)))
 
-(defun jdt-prj-owning (file-name projects)
+(defun project-owning (file-name projects)
   "Returns the project owning file-name"
-  (let ((prjs (remove-if-not (lambda (p)
-                               (string-starts-with (jdt-prj-basedir p) file-name))
+  (let ((prjs (remove-if-not (lambda (p) (string-starts-with (project-basedir p)
+                                                             file-name))
                              projects)))
     (when (not (= 1 (length prjs)))
       (error (format "Unable to find unique project owning file name: %s"
                      file-name)))
     (car prjs)))
 
-(defun jdt-prj-owning-current-buffer ()
-  (jdt-prj-owning (buffer-file-name) jdt-projects))
+(defun project-owning-current-buffer ()
+  (project-owning (buffer-file-name) jdt-projects))
 
 (defun jdt-compile-project ()
   (interactive)
