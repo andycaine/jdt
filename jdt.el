@@ -111,6 +111,37 @@
 (defun jdt-prj-owning-current-buffer ()
   (jdt-prj-owning (buffer-file-name) jdt-projects))
 
+(defun jdt-compile-project ()
+  (interactive)
+  (let ((cur-dir default-directory))
+    (cd-absolute (jdt-prj-basedir (jdt-prj-owning-current-buffer)))
+    (cond ((file-exists-p "build.xml")
+           (compile "ant compile"))
+          ((file-exists-p "pom.xml")
+           (compile "mvn compile")))
+    (cd-absolute cur-dir)))
+
+(defun jdt-run-mvn-target ()
+  (interactive)
+  (jdt-funcall-in-prj-base
+   (lambda ()
+    (compile (concat "mvn " (completing-read "Target: "
+                                             '("compile" "install" "test" "clean")))))))
+     
+(defun jdt-funcall-in-prj-base (fn)
+  (let ((cur-dir default-directory))
+    (cd-absolute (jdt-prj-basedir (jdt-prj-owning-current-buffer)))
+    (funcall fn)
+    (cd-absolute cur-dir)))
+
+(defun jdt-compile-current-buffer ()
+  (interactive)
+  (jdt-funcall-in-prj-base
+   (lambda ()
+     (compile (format "javac -cp %s -d target/classes %s"
+                      (jdt-prj-classpath (jdt-prj-owning-current-buffer))
+                      (buffer-file-name))))))
+
 ;; Class names
 (defun jdt-class-file-p (file-name)
   "Returns true if file-name represents a class file."
@@ -250,13 +281,12 @@
            (java-lang-name (jdt-class-in-java-lang-p simple-name)))
       (or java-lang-name
           (if (progn (goto-char (point-min))
-                     (re-search-forward (concat "^import +\\(.*\\)" simple-name ";") nil 't))
+                     (re-search-forward (concat "^import +\\(.*\\)\\." simple-name ";") nil 't))
               (jdt-make-class-name (match-string-no-properties 1) simple-name))
           (jdt-make-class-name (jdt-package-current-buffer) simple-name)))))
 
 ;(with-current-buffer (get-buffer "LoadFileCreatorImpl.java")
-;  (goto-char 2532)
-;  (jdt-class-of-object-being-called-at-point))
+;  (jdt-class-methods (jdt-class-of-object-being-called-at-point)))
 
 (defun jdt-class-methods (class)
   (let ((res (process-lines "listmembers"
@@ -264,15 +294,21 @@
                             (jdt-class-name-as-string class))))
     res))
 
-(with-current-buffer (get-buffer "LoadFileCreatorImpl.java")
-  (jdt-class-methods '("java.util" . "List")))
+(jdt-class-name-as-string '("java.io." . "BufferedReader"))
+
+;(with-current-buffer (get-buffer "LoadFileCreatorImpl.java")
+;  (jdt-class-of-object-being-called-at-point))
+;  (jdt-class-methods (jdt-class-of-object-being-called-at-point)))
+
+;  (jdt-class-methods '("java.util" . "List")))
 
 
 (defun jdt-ac-method-candidates ()
   (jdt-class-methods (jdt-class-of-object-being-called-at-point)))
 
 (defun jdt-ac-complete-method ()
-  )
+  (zap-to-char -1 ?\:))
+
 ;; (defun jdt-member-candidates ()
 ;;   (let ((class (jdt-fq-class-name-of-object-at-point)))
 ;;     (jdt-list-members class)))
@@ -281,7 +317,7 @@
   '((candidates . jdt-ac-method-candidates)
     (requires . 0)
     (prefix . c-dot)
-;    (action . jdt-ac-complete-method)
+    (action . jdt-ac-complete-method)
     (symbol . "m")))
 
 (defun jdt-auto-complete-setup ()
@@ -291,6 +327,7 @@
 
 (add-hook 'java-mode-hook 'jdt-auto-complete-setup)
 (add-hook 'java-mode-hook 'auto-complete-mode)
+
 
 
 (provide 'jdt)
