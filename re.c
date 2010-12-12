@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define NUM_TESTS 18
+#define NUM_TESTS 19
 #define TRUE 1
 #define FALSE 0
 
@@ -34,7 +34,8 @@ int main(char **args) {
     {"bc", "a*bc", TRUE},
     {"aaaabc", "a*bc", TRUE},
     {"aaabbbc", "a*b*c", TRUE},
-    {"aaac", "a*b*c", TRUE}
+    {"aaac", "a*b*c", TRUE},
+    {"", "", TRUE}
   };
 
   int i;
@@ -48,11 +49,11 @@ int main(char **args) {
 
 int match(char *str, char *regex) {
   if (*regex == '^') return match_here(str, ++regex);
-  while (*str != '\0') {
-    if (match_here(str++, regex)) {
+  do {
+    if (match_here(str, regex)) {
       return TRUE;
     }
-  }
+  } while (*str++ != '\0');
   return FALSE;
 }
 
