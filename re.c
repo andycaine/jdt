@@ -50,7 +50,7 @@ int main(char **args) {
 }
 
 int match(char *str, char *regex) {
-  if (*regex == '^') return match_here(str, ++regex);
+  if (*regex == '^') return match_here(str, regex + 1);
   do {
     if (match_here(str, regex)) {
       return TRUE;
@@ -61,9 +61,9 @@ int match(char *str, char *regex) {
 
 int match_here(char *str, char *regex) {
   if (*regex == '\0') return TRUE;
-  if (*(regex + 1) == '*') return match_star(regex[0], str, regex + 2);
-  if (*str == '\0') return *regex == '$' && *++regex == '\0';
-  if (*regex == *str || *regex == '.') return match_here(++str, ++regex);
+  if (regex[1] == '*') return match_star(regex[0], str, regex + 2);
+  if (*str == '\0') return *regex == '$' && regex[1] == '\0';
+  if (*regex == *str || *regex == '.') return match_here(str + 1, regex + 1);
   return FALSE;
 }
 
