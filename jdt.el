@@ -128,7 +128,7 @@ classes from the Java class libraries."
 (defun project-classpath-string (project)
   "Returns a string containing all the classpath entries for PROJECT suitable
 for passing as an argument to javac."
-  (join ":" (jdt-prj-classpath-entries prj)))
+  (join ":" (project-classpath-entries project)))
 
 (defun project-owning (file-name projects)
   "Returns the project owning file-name"

@@ -33,12 +33,15 @@ public class Re {
             new TestCase("aaac", "a*b*c", true),
             new TestCase("", "", true),
             new TestCase("abc", "a.c", true),
-            new TestCase("abc", "^a.*$", true)
+            new TestCase("abc", "^a.*$", true),
+            new TestCase("aaa", "a*", true)
         };
-    
-        for (int i = 0; i < test_cases.length; i++) {
-            if (match(test_cases[i].str, test_cases[i].regex) != test_cases[i].expected) {
-                System.out.println(String.format("Test failure: %s -> %s", test_cases[i].str, test_cases[i].regex));
+
+        for (int j = 0; j < 10000000; j++) {
+            for (int i = 0; i < test_cases.length; i++) {
+                if (match(test_cases[i].str, test_cases[i].regex) != test_cases[i].expected) {
+                    System.out.println(String.format("Test failure: %s -> %s", test_cases[i].str, test_cases[i].regex));
+                }
             }
         }
     }
@@ -57,19 +60,21 @@ public class Re {
     
     private static boolean match_here(String str, String regex) {
         if (regex.length() == 0) return true;
-        if (regex.charAt(0) == '*') return match_star(regex.charAt(0), str, regex.substring(2));
-        if (str.length() == 0) return regex.charAt(0) == '$' && regex.length() == 2;
-        if (regex.charAt(0) == str.charAt(0) || regex.charAt(0) == '.') return match_here(str.substring(1), regex.substring(1));
+        if (regex.length() > 1 && regex.charAt(1) == '*')
+            return match_star(regex.charAt(0), str, regex.substring(2));
+        if (str.length() == 0) return regex.charAt(0) == '$' && regex.length() == 1;
+        if (regex.charAt(0) == str.charAt(0) || regex.charAt(0) == '.')
+            return match_here(str.substring(1), regex.substring(1));
         return false;
     }
     
     private static boolean match_star(char c, String str, String regex) {
         int i = 0;
         do {
-            if (match_here(str, regex)) {
+            if (match_here(str.substring(i), regex)) {
                 return true;
             }
-        } while ((str.charAt(i) == c || c == '.') && ++i < str.length());
+        } while ((str.charAt(i) == c || c == '.') && ++i <= str.length());
         return false;
     }
 

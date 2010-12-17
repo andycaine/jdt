@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define NUM_TESTS 21
+#define NUM_TESTS 22
 #define TRUE 1
 #define FALSE 0
 
@@ -37,13 +37,17 @@ int main(char **args) {
     {"aaac", "a*b*c", TRUE},
     {"", "", TRUE},
     {"abc", "a.c", TRUE},
-    {"abc", "^a.*$", TRUE}
+    {"abc", "^a.*$", TRUE},
+    {"aaa", "a*", TRUE}
   };
 
   int i;
-  for (i = 0; i < NUM_TESTS; i++) {
-    if (match(test_cases[i].str, test_cases[i].regex) != test_cases[i].expected) {
-      printf("Test failure: %s -> %s\n", test_cases[i].str, test_cases[i].regex);
+  int j;
+  for (j = 0; j < 10000000; j++) {
+    for (i = 0; i < NUM_TESTS; i++) {
+      if (match(test_cases[i].str, test_cases[i].regex) != test_cases[i].expected) {
+        printf("Test failure: %s -> %s\n", test_cases[i].str, test_cases[i].regex);
+      }
     }
   }
   return 0;
